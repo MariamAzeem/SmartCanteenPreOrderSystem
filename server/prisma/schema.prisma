@@ -1,0 +1,230 @@
+// Prisma schema for Smart Canteen Pre-Order & Queue Management System
+// Compatible with PostgreSQL (Render, Supabase, Neon, AWS RDS)
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+enum Role {
+  CUSTOMER
+  STAFF
+  MANAGER
+  ADMIN
+}
+
+enum AccountStatus {
+  PENDING
+  ACTIVE
+  SUSPENDED
+}
+
+enum ItemStatus {
+  AVAILABLE
+  LIMITED
+  SOLD_OUT
+  TEMPORARILY_UNAVAILABLE
+}
+
+enum OrderStatus {
+  PLACED
+  ACCEPTED
+  PREPARING
+  READY
+  COLLECTED
+  COMPLETED
+  CANCELLED
+  REJECTED
+  DELAYED
+  NOT_COLLECTED
+}
+
+enum PaymentMethod {
+  CASH
+  EASYPAISA
+  JAZZCASH
+  CARD
+}
+
+enum PaymentStatus {
+  PENDING
+  PAID
+  FAILED
+  REFUNDED
+}
+
+model User {
+  id              String         @id @default(uuid())
+  name            String
+  email           String         @unique
+  passwordHash    String
+  phone           String
+  role            Role           @default(CUSTOMER)
+  accountStatus   AccountStatus  @default(PENDING)
+  avatar          String?
+  emailVerifiedAt DateTime?
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+
+  orders          Order[]
+  activityLogs    ActivityLog[]
+  notifications   Notification[]
+  emailTokens     EmailToken[]
+
+  @@index([email])
+  @@index([role])
+}
+
+model EmailToken {
+  id        String   @id @default(uuid())
+  userId    String
+  token     String   @unique
+  type      String   // VERIFICATION or RESET_PASSWORD
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model MenuItem {
+  id                String      @id @default(uuid())
+  name              String
+  category          String
+  price             Decimal     @db.Decimal(10, 2)
+  availableQuantity Int         @default(0)
+  preparationTime   Int         // in minutes
+  status            ItemStatus  @default(AVAILABLE)
+  image             String
+  description       String
+  isPopular         Boolean     @default(false)
+  isVegetarian      Boolean     @default(false)
+  isSpicy           Boolean     @default(false)
+  createdAt         DateTime    @default(now())
+  updatedAt         DateTime    @updatedAt
+
+  orderItems        OrderItem[]
+
+  @@index([category])
+  @@index([status])
+}
+
+model Order {
+  id                   String        @id @default(uuid())
+  tokenNumber          String        // e.g. C-021 (generated strictly server-side)
+  orderDate            String        @default(dbgenerated("TO_CHAR(CURRENT_DATE, 'YYYY-MM-DD')")) // YYYY-MM-DD
+  customerId           String
+  totalAmount          Decimal       @db.Decimal(10, 2)
+  orderTime            DateTime      @default(now())
+  pickupTime           String        @default("Immediate") // Slot window or "Immediate"
+  isScheduled          Boolean       @default(false)
+  estimatedReadyTime   DateTime
+  estimatedPrepMinutes Int
+  actualReadyTime      DateTime?
+  orderStatus          OrderStatus   @default(PLACED)
+  paymentMethod        PaymentMethod @default(CASH)
+  paymentStatus        PaymentStatus @default(PENDING)
+  paymentReference     String?
+  cancellationReason   String?
+  rejectionReason      String?
+  collectedAt          DateTime?
+  collectedBy          String?
+  idempotencyKey       String?       @unique // Unique DB constraint preventing duplicate submissions
+  priorityScore        Int           @default(50)
+  isDelayed            Boolean       @default(false)
+  delayMinutes         Int           @default(0)
+  isQuick              Boolean       @default(false)
+  createdAt            DateTime      @default(now())
+  updatedAt            DateTime      @updatedAt
+
+  customer             User          @relation(fields: [customerId], references: [id])
+  items                OrderItem[]
+
+  @@unique([orderDate, tokenNumber], name: "order_date_token_unique")
+  @@index([customerId])
+  @@index([orderStatus])
+  @@index([tokenNumber])
+  @@index([orderTime])
+}
+
+model VoidToken {
+  id          String   @id @default(uuid())
+  tokenNumber String
+  orderDate   String
+  reason      String
+  voidedAt    DateTime @default(now())
+
+  @@unique([orderDate, tokenNumber])
+  @@index([tokenNumber])
+}
+
+model OrderItem {
+  id                 String   @id @default(uuid())
+  orderId            String
+  itemId             String
+  quantity           Int
+  price              Decimal  @db.Decimal(10, 2)
+  preparationTime    Int
+  specialInstruction String?
+
+  order              Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  menuItem           MenuItem @relation(fields: [itemId], references: [id])
+
+  @@index([orderId])
+  @@index([itemId])
+}
+
+model PickupSlot {
+  id            String   @id @default(uuid())
+  timeWindow    String   @unique // e.g. "12:30 PM - 12:45 PM"
+  maxCapacity   Int      @default(20)
+  currentBooked Int      @default(0)
+  status        String   @default("Open") // Open, Filling, Full
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+}
+
+model OrderLimitsConfig {
+  id                         Int      @id @default(1)
+  maxOrdersPer15Min          Int      @default(20)
+  maxItemsPerCustomer        Int      @default(6)
+  maxScheduledPickupsPerSlot Int      @default(20)
+  autoEscalationDelayMinutes Int      @default(5)
+  notCollectedTimeoutMinutes Int      @default(20)
+  kitchenParallelismFactor   Int      @default(3)
+  updatedAt                  DateTime @updatedAt
+}
+
+model ActivityLog {
+  id          String   @id @default(uuid())
+  timestamp   DateTime @default(now())
+  action      String
+  actorName   String
+  actorRole   Role
+  details     String
+  tokenNumber String?
+  userId      String?
+
+  user        User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([action])
+  @@index([tokenNumber])
+}
+
+model Notification {
+  id          String   @id @default(uuid())
+  userId      String
+  title       String
+  message     String
+  type        String   @default("order_status")
+  tokenNumber String?
+  read        Boolean  @default(false)
+  createdAt   DateTime @default(now())
+
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}

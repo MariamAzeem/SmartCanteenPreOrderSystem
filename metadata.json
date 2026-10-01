@@ -1,0 +1,8 @@
+{
+  "name": "Remix Smart Canteen Pre-Order \u0026 Queue Management System",
+  "description": "Smart canteen pre-order, digital token queue, live kitchen management, dynamic ETA forecasting, and sales analytics.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
